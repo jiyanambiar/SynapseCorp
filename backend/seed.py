@@ -1,22 +1,23 @@
-import random
+from faker import Faker
 from falkordb import FalkorDB
 
 def generate_synthetic_graph():
+    fake = Faker()
     db = FalkorDB(host="localhost", port=6379)
     g = db.select_graph("companybrain")
 
     g.query("MATCH (n) DETACH DELETE n")
 
-    team_members = ["Prarabdha", "Jiya", "Alex", "Sam", "Taylor"]
+    team_members = [fake.name() for _ in range(5)]
     for member in team_members:
         g.query(f"CREATE (:TeamMember {{name: '{member}'}})")
 
     servers = [f"server-{i:03d}" for i in range(1, 6)]
     for server in servers:
-        status = "failing" if server == "server-004" else "healthy"
+        status = "failing" if server == "server-001" else "healthy"
         g.query(f"CREATE (:Server {{name: '{server}', status: '{status}'}})")
 
-    services = ["AuthService", "PaymentAPI", "UserDashboard", "NotificationService", "SearchEngine"]
+    services = [f"{fake.word().capitalize()}Service" for _ in range(5)]
     for i, service in enumerate(services):
         owner = team_members[i % len(team_members)]
         server = servers[i % len(servers)]
@@ -28,27 +29,28 @@ def generate_synthetic_graph():
             CREATE (srv)-[:RUNS_ON]->(s)
         """)
 
-    g.query("""
-        MATCH (payment:Service {name: 'PaymentAPI'}), (auth:Service {name: 'AuthService'})
-        CREATE (payment)-[:DEPENDS_ON]->(auth)
+    g.query(f"""
+        MATCH (s1:Service {{name: '{services[1]}'}}), (s0:Service {{name: '{services[0]}'}})
+        CREATE (s1)-[:DEPENDS_ON]->(s0)
     """)
-    g.query("""
-        MATCH (dash:Service {name: 'UserDashboard'}), (auth:Service {name: 'AuthService'})
-        CREATE (dash)-[:DEPENDS_ON]->(auth)
+    g.query(f"""
+        MATCH (s2:Service {{name: '{services[2]}'}}), (s0:Service {{name: '{services[0]}'}})
+        CREATE (s2)-[:DEPENDS_ON]->(s0)
     """)
 
-    customers = ["AcmeCorp", "Globex", "Initech", "Soylent"]
+    customers = [fake.company() for _ in range(4)]
     for i, customer in enumerate(customers):
-        g.query(f"CREATE (:Customer {{name: '{customer}'}})")
+        clean_customer = customer.replace("'", "")
+        g.query(f"CREATE (:Customer {{name: '{clean_customer}'}})")
         
-        service_dep = services[i % 2]
+        service_dep = services[i % len(services)]
         g.query(f"""
-            MATCH (c:Customer {{name: '{customer}'}}), (srv:Service {{name: '{service_dep}'}})
+            MATCH (c:Customer {{name: '{clean_customer}'}}), (srv:Service {{name: '{service_dep}'}})
             CREATE (srv)-[:IMPACTS]->(c)
         """)
 
     g.query("""
-        MATCH (s:Server {name: 'server-004'})
+        MATCH (s:Server {name: 'server-001'})
         CREATE (inc:Incident {id: 'INC-9942', description: 'CPU Spike Detected'})
         CREATE (inc)-[:REPORTED_ON]->(s)
     """)
