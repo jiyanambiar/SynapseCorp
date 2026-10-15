@@ -17,7 +17,7 @@ def generate_synthetic_graph():
         'srv1': f"{fake.word().capitalize()}Service",
         'c0': fake.company(),
         'c1': fake.company(),
-        'inc_id': 'INC-9942'
+        'inc_id': f"INC-{fake.random_int(min=1000, max=9999)}"
     }
     
     g.query("""

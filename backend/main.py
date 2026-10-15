@@ -13,6 +13,13 @@ class TriageRequest(BaseModel):
 def read_root():
     return RedirectResponse(url="/docs")
 
+@app.get("/incidents")
+def get_incidents():
+    graph = db.select_graph("companybrain")
+    query = "MATCH (i:Incident) RETURN i.id, i.description"
+    result = graph.query(query).result_set
+    return [{"id": row[0], "description": row[1]} for row in result]
+
 @app.post("/triage")
 def run_triage(request: TriageRequest):
     graph = db.select_graph("companybrain")
