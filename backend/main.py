@@ -237,25 +237,35 @@ def update_incident(incident_id: str, payload: IncidentUpdate):
 @app.post("/triage")
 def run_triage(request: TriageRequest):
     incident = find_incident(request.incident_id)
-    impact_raw = rows("""
-        MATCH (i:Incident {id: $inc_id})-[:REPORTED_ON]->(:Server)<-[:RUNS_ON]-(service:Service)-[:IMPACTS]->(customer:Customer)
-        RETURN service.name, customer.name
-    """, {"inc_id": request.incident_id})
-    owner_raw = rows("""
-        MATCH (i:Incident {id: $inc_id})-[:REPORTED_ON]->(:Server)<-[:RUNS_ON]-(service:Service)<-[:OWNS]-(owner:TeamMember)
-        RETURN service.name, owner.name
-    """, {"inc_id": request.incident_id})
-    downstream_impact = [{"service": row[0], "customer": row[1]} for row in impact_raw]
-    personnel_routing = [{"service": row[0], "owner": row[1]} for row in owner_raw]
+    downstream_impact = trace_downstream_impact(request.incident_id)
+    personnel_routing = find_responsible_owner(request.incident_id)
     return {"incident": incident, "downstream_impact": downstream_impact, "personnel_routing": personnel_routing,
             "summary": {"affected_customers": len({item["customer"] for item in downstream_impact}),
                         "responsible_owners": len({item["owner"] for item in personnel_routing})},
             "tool_runs": [
-                {"tool": "trace_downstream_impact", "purpose": "Find customers affected by the incident service.",
+                {"tool": "trace_downstream_impact", "protocol": "MCP", "purpose": "Find customers affected by the incident service.",
                  "path": "Incident → Server ← Service → Customer", "result_count": len(downstream_impact)},
-                {"tool": "find_responsible_owner", "purpose": "Find the person accountable for the affected service.",
+                {"tool": "find_responsible_owner", "protocol": "MCP", "purpose": "Find the person accountable for the affected service.",
                  "path": "Incident → Server ← Service ← TeamMember", "result_count": len(personnel_routing)},
             ]}
+
+
+def trace_downstream_impact(incident_id: str) -> list[dict[str, Any]]:
+    """MCP graph tool: trace an incident to its affected customers."""
+    impact_raw = rows("""
+        MATCH (i:Incident {id: $inc_id})-[:REPORTED_ON]->(:Server)<-[:RUNS_ON]-(service:Service)-[:IMPACTS]->(customer:Customer)
+        RETURN service.name, customer.name
+    """, {"inc_id": incident_id})
+    return [{"service": row[0], "customer": row[1]} for row in impact_raw]
+
+
+def find_responsible_owner(incident_id: str) -> list[dict[str, Any]]:
+    """MCP graph tool: resolve service ownership for an incident."""
+    owner_raw = rows("""
+        MATCH (i:Incident {id: $inc_id})-[:REPORTED_ON]->(:Server)<-[:RUNS_ON]-(service:Service)<-[:OWNS]-(owner:TeamMember)
+        RETURN service.name, owner.name
+    """, {"inc_id": incident_id})
+    return [{"service": row[0], "owner": row[1]} for row in owner_raw]
 
 
 @app.post("/agent/triage")
@@ -399,6 +409,113 @@ def get_reports():
             "by_severity": [{"severity": key, "count": value} for key, value in severity.items()], "incidents": incidents}
 
 
+KNOWLEDGE_STOP_WORDS = {"a", "an", "and", "are", "before", "for", "from", "how", "i", "in", "is", "it", "me", "of", "on", "our", "the", "to", "was", "what", "when", "where", "which", "who", "why", "with", "about", "show", "find", "tell", "explain", "company", "team"}
+
+
+def search_company_knowledge(query: str) -> dict[str, Any]:
+    """MCP graph tool: search company entities and return relationship evidence with source documents."""
+    terms = list(dict.fromkeys(term for term in re.findall(r"[a-z0-9][a-z0-9_-]*", query.lower())
+                               if len(term) > 1 and term not in KNOWLEDGE_STOP_WORDS))
+    if not terms:
+        return {"answer": "Add a service, person, team, project, incident, or document name to search the company graph.",
+                "matches": [], "facts": [], "sources": [], "terms": []}
+
+    node_rows = rows("""
+        MATCH (node)
+        WHERE node:Workspace OR node:Team OR node:TeamMember OR node:Service OR node:Server OR node:Customer
+           OR node:Incident OR node:Project OR node:Document OR node:Decision OR node:Investigation OR node:AgentAction
+        RETURN id(node), labels(node), properties(node)
+        LIMIT 1000
+    """)
+    ranked = []
+    for row in node_rows:
+        record = props(row[2])
+        title = str(record.get("name") or record.get("title") or record.get("id") or "")
+        searchable = " ".join(str(value) for value in record.values() if value is not None).lower()
+        matched = [term for term in terms if term in searchable]
+        if matched:
+            score = len(matched) + (2 if title and title.lower() in query.lower() else 0)
+            ranked.append({"graph_id": row[0], "labels": row[1], "properties": record,
+                           "title": title, "matched_terms": matched, "score": score})
+    ranked.sort(key=lambda item: (-item["score"], item["title"].lower()))
+    matches = ranked[:8]
+    if not matches:
+        return {"answer": "No matching people, teams, services, projects, incidents, documents, or decisions were found in the company graph.",
+                "matches": [], "facts": [], "sources": [], "terms": terms}
+
+    matched_ids = [item["graph_id"] for item in matches]
+    relationship_rows = rows("""
+        MATCH (source)-[relationship]->(target)
+        WHERE id(source) IN $node_ids OR id(target) IN $node_ids
+        RETURN id(source), labels(source), properties(source), type(relationship),
+               id(target), labels(target), properties(target)
+        LIMIT 100
+    """, {"node_ids": matched_ids})
+    facts, seen_facts, sources, seen_sources = [], set(), [], set()
+
+    def label_title(labels: list[str], record: dict[str, Any]) -> str:
+        return str(record.get("name") or record.get("title") or record.get("id") or (labels[0] if labels else "Graph record"))
+
+    def add_source(record: dict[str, Any]):
+        if "Document" not in record["labels"]:
+            return
+        properties = record["properties"]
+        source_id = str(properties.get("id") or properties.get("title"))
+        if source_id not in seen_sources:
+            seen_sources.add(source_id)
+            sources.append({"id": properties.get("id"), "title": properties.get("title") or source_id,
+                            "kind": properties.get("kind", "Document"), "summary": properties.get("summary")})
+
+    for item in matches:
+        add_source(item)
+        source_id = item["properties"].get("source")
+        if source_id:
+            source_document = next((candidate for candidate in node_rows if props(candidate[2]).get("id") == source_id), None)
+            if source_document:
+                add_source({"labels": source_document[1], "properties": props(source_document[2])})
+
+    relation_words = {
+        "OWNS": "owns", "KNOWS": "knows", "WORKED_ON": "worked on", "HAS_MEMBER": "has member",
+        "DELIVERS": "delivers", "USES": "uses", "DOCUMENTS": "documents", "ABOUT": "is about",
+        "SOURCED_FROM": "is sourced from", "DEPENDS_ON": "depends on", "RUNS_ON": "runs on",
+        "IMPACTS": "impacts", "REPORTED_ON": "was reported on", "ACTED_ON": "acted on",
+        "ROUTED_TO": "was routed to", "HAS_SOURCE": "has source",
+    }
+    for row in relationship_rows:
+        source_record, target_record = props(row[2]), props(row[6])
+        relation = str(row[3])
+        if relation not in relation_words:
+            continue
+        fact_key = (str(row[0]), relation, str(row[4]))
+        if fact_key in seen_facts:
+            continue
+        seen_facts.add(fact_key)
+        facts.append({"subject": label_title(row[1], source_record), "relationship": relation_words[relation],
+                      "object": label_title(row[5], target_record), "relationship_type": relation,
+                      "source_id": source_record.get("id"), "target_id": target_record.get("id")})
+        if "Document" in row[1]:
+            add_source({"labels": row[1], "properties": source_record})
+        if "Document" in row[5]:
+            add_source({"labels": row[5], "properties": target_record})
+
+    top_titles = ", ".join(item["title"] for item in matches[:3])
+    if facts:
+        answer = "Graph evidence for " + top_titles + ": " + "; ".join(
+            f"{fact['subject']} {fact['relationship']} {fact['object']}" for fact in facts[:6]) + "."
+    else:
+        answer = "Matching company records: " + "; ".join(
+            str(item["properties"].get("summary") or item["title"]) for item in matches[:5]) + "."
+    return {"answer": answer, "matches": [{"type": item["labels"][0] if item["labels"] else "Record",
+                                              "id": item["properties"].get("id"), "title": item["title"],
+                                              "matched_terms": item["matched_terms"]} for item in matches],
+            "facts": facts[:30], "sources": sources, "terms": terms}
+
+
+@app.post("/knowledge/search")
+def knowledge_search(payload: InvestigationInput):
+    return search_company_knowledge(payload.query)
+
+
 @app.get("/investigations")
 def get_investigations():
     result = rows("MATCH (i:Investigation) RETURN properties(i)")
@@ -407,11 +524,32 @@ def get_investigations():
 
 @app.post("/investigations", status_code=201)
 def create_investigation(payload: InvestigationInput):
-    record = {"id": f"investigation-{uuid4().hex[:10]}", "query": payload.query,
-              "incident_id": payload.incident_id, "created_at": datetime.now(timezone.utc).isoformat(), "status": "Complete"}
-    evidence = []
+    knowledge = search_company_knowledge(payload.query)
+    tools_used = ["search_company_knowledge"]
+    evidence = list(knowledge["facts"])
+    sources = list(knowledge["sources"])
+    answer = knowledge["answer"]
     if payload.incident_id:
         triage = run_triage(TriageRequest(incident_id=payload.incident_id))
-        evidence = [*triage["downstream_impact"], *triage["personnel_routing"]]
+        tools_used.extend(tool["tool"] for tool in triage["tool_runs"])
+        evidence.extend([{"subject": item["service"], "relationship": "impacts customer", "object": item["customer"]}
+                         for item in triage["downstream_impact"]])
+        evidence.extend([{"subject": item["owner"], "relationship": "owns service", "object": item["service"]}
+                         for item in triage["personnel_routing"]])
+        answer += f" Incident triage found {triage['summary']['affected_customers']} affected customers and {triage['summary']['responsible_owners']} responsible owners."
+        service_ids = [item["service"] for item in triage["personnel_routing"]]
+        for service_id in service_ids:
+            service = next((item for item in all_services() if item["name"] == service_id), None)
+            if service:
+                detail = get_service(service["id"])
+                for document in detail["documents"]:
+                    source_id = str(document.get("id") or document.get("title"))
+                    if source_id not in {str(item.get("id") or item.get("title")) for item in sources}:
+                        sources.append({"id": document.get("id"), "title": document.get("title"),
+                                        "kind": document.get("kind", "Document"), "summary": document.get("summary")})
+    record = {"id": f"investigation-{uuid4().hex[:10]}", "query": payload.query,
+              "incident_id": payload.incident_id, "created_at": datetime.now(timezone.utc).isoformat(),
+              "status": "Complete", "answer": answer, "source_ids": [source.get("id") for source in sources if source.get("id")],
+              "tools_used": tools_used}
     rows("CREATE (i:Investigation) SET i = $properties", {"properties": record})
-    return {**record, "evidence": evidence}
+    return {**record, "evidence": evidence, "sources": sources, "matches": knowledge["matches"]}
