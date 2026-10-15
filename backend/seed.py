@@ -8,7 +8,7 @@ def generate_synthetic_graph():
 
     g.query("MATCH (n) DETACH DELETE n")
 
-    team_members = [fake.name() for _ in range(5)]
+    team_members = [fake.name().replace("'", "") for _ in range(5)]
     for member in team_members:
         g.query(f"CREATE (:TeamMember {{name: '{member}'}})")
 
@@ -17,7 +17,7 @@ def generate_synthetic_graph():
         status = "failing" if server == "server-001" else "healthy"
         g.query(f"CREATE (:Server {{name: '{server}', status: '{status}'}})")
 
-    services = [f"{fake.word().capitalize()}Service" for _ in range(5)]
+    services = [f"{fake.word().capitalize()}Service".replace("'", "") for _ in range(5)]
     for i, service in enumerate(services):
         owner = team_members[i % len(team_members)]
         server = servers[i % len(servers)]
@@ -33,19 +33,19 @@ def generate_synthetic_graph():
         MATCH (s1:Service {{name: '{services[1]}'}}), (s0:Service {{name: '{services[0]}'}})
         CREATE (s1)-[:DEPENDS_ON]->(s0)
     """)
+    
     g.query(f"""
         MATCH (s2:Service {{name: '{services[2]}'}}), (s0:Service {{name: '{services[0]}'}})
         CREATE (s2)-[:DEPENDS_ON]->(s0)
     """)
 
-    customers = [fake.company() for _ in range(4)]
+    customers = [fake.company().replace("'", "") for _ in range(4)]
     for i, customer in enumerate(customers):
-        clean_customer = customer.replace("'", "")
-        g.query(f"CREATE (:Customer {{name: '{clean_customer}'}})")
+        g.query(f"CREATE (:Customer {{name: '{customer}'}})")
         
         service_dep = services[i % len(services)]
         g.query(f"""
-            MATCH (c:Customer {{name: '{clean_customer}'}}), (srv:Service {{name: '{service_dep}'}})
+            MATCH (c:Customer {{name: '{customer}'}}), (srv:Service {{name: '{service_dep}'}})
             CREATE (srv)-[:IMPACTS]->(c)
         """)
 
