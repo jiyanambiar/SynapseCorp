@@ -14,7 +14,7 @@
 
 ## Frontend Development (Branch: frontend-dev)
 - [ ] Jiya to create and checkout `frontend-dev` branch
-- [ ] Initialize Next.js app in `/frontend`
+- [x] Initialize React app with Vite in `/frontend`
 - [ ] Connect visual graph canvas to backend topology endpoint
 
 ## Final Submission (Merging to main)

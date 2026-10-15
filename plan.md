@@ -3,7 +3,7 @@
 ## 1. Project Architecture & Workflow
 - Root: Shared context (`plan.md`, `action.md`)
 - `/backend`: FastAPI, FalkorDB Python SDK, dynamic data generation. (Branch: `backend-dev`)
-- `/frontend`: Next.js dashboard, visual graph canvas. (Branch: `frontend-dev`)
+- `/frontend`: React dashboard built with Vite, visual graph canvas. (Branch: `frontend-dev`)
 
 ## 2. Graph Schema (Track 1 & Track 3)
 - **Nodes:** Service, Server, TeamMember, Customer, Incident

@@ -1,1 +1,5 @@
 .aider*
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/.npm-cache/
