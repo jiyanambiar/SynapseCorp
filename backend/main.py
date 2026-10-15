@@ -1,12 +1,17 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from falkordb import FalkorDB
+from fastapi.responses import RedirectResponse
 
 app = FastAPI()
 db = FalkorDB(host="localhost", port=6379)
 
 class TriageRequest(BaseModel):
     incident_id: str
+
+@app.get("/")
+def read_root():
+    return RedirectResponse(url="/docs")
 
 @app.post("/triage")
 def run_triage(request: TriageRequest):
