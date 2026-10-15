@@ -1,5 +1,42 @@
-import { Link } from "react-router-dom";import {useState} from "react";import WorkspacePage from "../../components/WorkspacePage";
-const metrics=[{label:"Incidents",value:"18",change:"↓ 22%",color:"metric-red"},{label:"Mean time to resolve",value:"18m",change:"↓ 12%",color:"metric-green"},{label:"Service uptime",value:"99.94%",change:"↑ 0.08%",color:"metric-gold"},{label:"Customer impact",value:"2.4k",change:"↓ 16%",color:"metric-blue"}];
-export default function ReportsPage(){const [range,setRange]=useState("Last 30 days");const [open,setOpen]=useState(false);const [toast,setToast]=useState("");function exportCsv(){const csv="Metric,Value,Change\nIncidents,18,-22%\nMean time to resolve,18m,-12%\nService uptime,99.94%,+0.08%\nCustomer impact,2.4k,-16%\n";const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="synapse-reliability-report.csv";a.click();URL.revokeObjectURL(a.href);setToast("Report exported as CSV.");setTimeout(()=>setToast(""),2500)}return <WorkspacePage eyebrow="TOOLS · RELIABILITY INSIGHTS" title="Reports" description="A clear view of reliability trends and incident response." action={<div className="report-actions"><button className="outline-button" onClick={()=>setOpen(!open)}>◷ &nbsp; {range}⌄</button>{open&&<div className="range-menu report-range">{["Last 7 days","Last 30 days","Last 90 days"].map(x=><button key={x} onClick={()=>{setRange(x);setOpen(false)}}>{x}{range===x&&<span>✓</span>}</button>)}</div>}<button className="primary-button" onClick={exportCsv}>↓ &nbsp; Export CSV</button></div>}>
- <section className="report-kpis">{metrics.map(m=><article className="panel report-kpi" key={m.label}><span>{m.label}</span><strong>{m.value}</strong><small className={m.color}>{m.change} vs previous period</small></article>)}</section><div className="reports-grid"><section className="panel report-chart-panel"><div className="panel-heading"><div><div className="section-kicker">INCIDENT TRENDS</div><h2>Incidents over time</h2></div><span className="chart-key"><i/> This period <i/> Previous</span></div><div className="report-chart"><div className="report-ylabels"><span>8</span><span>6</span><span>4</span><span>2</span><span>0</span></div><div className="report-bars">{[3,5,2,7,4,6,3,5,2,4,7,3].map((h,i)=><div className="bar-pair" key={i}><i style={{height:`${h*11}%`}}/><i style={{height:`${Math.max(12,h*8-5)}%`}}/></div>)}</div><div className="report-xlabels">{["Wk 1","Wk 2","Wk 3","Wk 4"].map(x=><span key={x}>{x}</span>)}</div></div></section><section className="panel report-summary"><div className="section-kicker">RESPONSE PERFORMANCE</div><h2>Resolution time by severity</h2>{[["SEV 1","32 min",68,"#c77a62"],["SEV 2","21 min",48,"#c3a46a"],["SEV 3","11 min",29,"#82a07b"]].map(([name,val,width,color])=><div className="resolution-row" key={name}><div><strong>{name}</strong><span>{val}</span></div><i><b style={{width:`${width}%`,background:color}}/></i></div>)}<div className="report-note">Your team is resolving incidents <strong>12% faster</strong> than last period.</div></section></div><section className="panel report-links"><div className="panel-heading"><div><div className="section-kicker">SAVED REPORTS</div><h2>Team insights</h2></div><button className="text-link" onClick={exportCsv}>Export all →</button></div><Link to="/teams" className="saved-report-row"><span className="service-symbol good">♙</span><span><strong>Team response overview</strong><small>Ownership and on-call performance</small></span><span>Updated today</span><b>↗</b></Link><Link to="/services" className="saved-report-row"><span className="service-symbol alert">⌘</span><span><strong>Service health summary</strong><small>Availability, latency, and active issues</small></span><span>Updated today</span><b>↗</b></Link></section>{toast&&<div className="toast-message">✓ &nbsp; {toast}</div>}
- </WorkspacePage>}
+import { useEffect, useMemo, useState } from "react";
+import WorkspacePage from "../../components/WorkspacePage";
+import { api, display } from "../../src/api";
+
+const normaliseReport = (value) => ({
+  incidents_total: Number(value?.incidents_total) || 0,
+  services_total: Number(value?.services_total) || 0,
+  average_uptime: value?.average_uptime !== null && value?.average_uptime !== undefined && Number.isFinite(Number(value.average_uptime)) ? Number(value.average_uptime) : null,
+  by_severity: Array.isArray(value?.by_severity) ? value.by_severity.filter((item) => item && typeof item === "object") : [],
+  incidents: Array.isArray(value?.incidents) ? value.incidents.filter((item) => item && typeof item === "object") : [],
+});
+
+export default function ReportsPage() {
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api("/reports").then((response) => { if (active) setReport(normaliseReport(response)); }).catch((requestError) => { if (active) setError(requestError.message); });
+    return () => { active = false; };
+  }, []);
+
+  const highestSeverityCount = useMemo(() => Math.max(1, ...(report?.by_severity || []).map((item) => Math.max(0, Number(item.count) || 0))), [report]);
+  function exportCsv() {
+    if (!report) return;
+    const lines = ["Severity,Incident count", ...report.by_severity.map((row) => `${row.severity || "Unknown"},${Number(row.count) || 0}`)];
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+    link.download = "synapse-reliability-report.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  if (error) return <WorkspacePage eyebrow="TOOLS · RELIABILITY INSIGHTS" title="Reports" description={error} />;
+  if (!report) return <WorkspacePage eyebrow="TOOLS · RELIABILITY INSIGHTS" title="Reports" description="Loading reporting data from FalkorDB." />;
+
+  const metrics = [["Incidents", report.incidents_total], ["Services", report.services_total], ["Average uptime", report.average_uptime === null ? "—" : `${report.average_uptime.toFixed(2)}%`]];
+  return <WorkspacePage eyebrow="TOOLS · RELIABILITY INSIGHTS" title="Reports" description="A graph-derived view of reliability data." action={<button className="primary-button" onClick={exportCsv}>↓ &nbsp; Export CSV</button>}>
+    <section className="report-kpis">{metrics.map(([label, value]) => <article className="panel report-kpi" key={label}><span>{label}</span><strong>{value}</strong><small>Current FalkorDB data</small></article>)}</section>
+    <div className="reports-grid"><section className="panel report-chart-panel"><div className="panel-heading"><div><div className="section-kicker">INCIDENT DISTRIBUTION</div><h2>Incidents by severity</h2></div></div><div className="report-chart"><div className="report-bars">{report.by_severity.map((item, index) => { const count = Math.max(0, Number(item.count) || 0); const height = Math.max(8, Math.min(100, (count / highestSeverityCount) * 100)); return <div className="bar-pair" key={`${item.severity || "unknown"}-${index}`}><i style={{ height: `${height}%` }} /><span>{item.severity || "Unknown"}<br />{count}</span></div>; })}</div></div>{!report.by_severity.length && <div className="empty-state">No incident records available.</div>}</section><section className="panel report-summary"><div className="section-kicker">INCIDENT RECORDS</div><h2>Latest incidents</h2>{report.incidents.length ? report.incidents.slice(0, 5).map((item, index) => <div className="resolution-row" key={item.id || `${item.title}-${item.created_at}-${index}`}><div><strong>{display(item.title, "Untitled incident")}</strong><span>{display(item.severity)}</span></div><span>{display(item.status)}</span></div>) : <div className="empty-state">No incident records available.</div>}</section></div>
+  </WorkspacePage>;
+}

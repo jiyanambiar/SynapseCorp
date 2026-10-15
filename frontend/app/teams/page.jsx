@@ -1,3 +1,55 @@
-import { Link } from "react-router-dom";import {useState} from "react";import WorkspacePage from "../../components/WorkspacePage";
-const teams=[{id:"commerce",name:"Commerce Platform",abbr:"CP",color:"#e4c7ad",members:["Sarah Chen","Jordan Miller","Priya Rao"],services:["Checkout API","Order Service"],oncall:"Sarah Chen",incidents:1},{id:"payments",name:"Payments",abbr:"PY",color:"#d6dfc3",members:["Alex Lee","Morgan Kim","Drew Park"],services:["Payments","Fraud Check"],oncall:"Alex Lee",incidents:0},{id:"data",name:"Data Platform",abbr:"DP",color:"#cbdcd7",members:["Morgan Kim","Taylor Reed"],services:["Customer DB","Analytics Warehouse"],oncall:"Morgan Kim",incidents:0},{id:"infrastructure",name:"Infrastructure",abbr:"IN",color:"#e8dbbc",members:["Drew Park","Priya Rao"],services:["Redis Cache","Worker Queue"],oncall:"Drew Park",incidents:1}];
-export default function TeamsPage(){const [query,setQuery]=useState("");const [favorite,setFavorite]=useState([]);const [expanded,setExpanded]=useState(null);const [allTeams,setAllTeams]=useState(teams);const [creating,setCreating]=useState(false);const [teamName,setTeamName]=useState("");const filtered=allTeams.filter(t=>t.name.toLowerCase().includes(query.toLowerCase()));function createTeam(e){e.preventDefault();if(!teamName.trim())return;const name=teamName.trim();setAllTeams([{id:`team-${Date.now()}`,name,abbr:name.split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase(),color:"#d6dfc3",members:["Jordan Miller"],services:[],oncall:"Jordan Miller",incidents:0},...allTeams]);setTeamName("");setCreating(false)}return <WorkspacePage eyebrow="WORKSPACE · PEOPLE" title="Teams" description="Know who owns each service and who is on call."><div className="team-toolbar"><label className="table-search">⌕ <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Find a team"/></label><button className="primary-button" onClick={()=>setCreating(true)}>＋ &nbsp; Add team</button></div><div className="team-grid">{filtered.map(t=><article className={`panel team-card ${expanded===t.id?"team-selected":""}`} key={t.id}><div className="team-card-head"><span className="team-avatar" style={{background:t.color}}>{t.abbr}</span><button className={`team-star ${favorite.includes(t.id)?"starred":""}`} aria-label="Favorite team" onClick={()=>setFavorite(favorite.includes(t.id)?favorite.filter(id=>id!==t.id):[...favorite,t.id])}>{favorite.includes(t.id)?"★":"☆"}</button></div><h2>{t.name}</h2><p>{t.members.length} members · {t.services.length} services</p><div className="team-card-section"><small>ON CALL NOW</small><span className="table-owner"><i>{t.oncall.split(" ").map(w=>w[0]).join("")}</i>{t.oncall}</span></div><div className="team-card-section"><small>OWNED SERVICES</small><div className="team-service-chips">{t.services.length?t.services.map(s=><Link to={`/services/${s.toLowerCase().replaceAll(" ","-")}`} key={s}>{s}</Link>):<span className="muted-chip">No services yet</span>}</div></div>{expanded===t.id&&<div className="team-members-expanded">{t.members.map(member=><span key={member}><i>{member.split(" ").map(w=>w[0]).join("")}</i>{member}</span>)}</div>}<div className="team-card-foot"><span>{t.incidents} open incidents</span><button onClick={()=>setExpanded(expanded===t.id?null:t.id)}>{expanded===t.id?"Hide members":"View members →"}</button></div></article>)}</div>{filtered.length===0&&<div className="empty-state panel">No teams match that name.</div>}{creating&&<div className="search-scrim" onMouseDown={e=>{if(e.target===e.currentTarget)setCreating(false)}}><form className="create-dialog" onSubmit={createTeam}><div className="section-kicker">NEW TEAM</div><h2>Create a team</h2><label>Team name<input autoFocus value={teamName} onChange={e=>setTeamName(e.target.value)} placeholder="e.g. Platform Engineering"/></label><div className="dialog-actions"><button type="button" className="outline-button" onClick={()=>setCreating(false)}>Cancel</button><button className="primary-button" disabled={!teamName.trim()}>Create team</button></div></form></div>}</WorkspacePage>}
+import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import WorkspacePage from "../../components/WorkspacePage";
+import { api, display, initials } from "../../src/api";
+
+const normaliseTeam = (team) => ({
+  ...team,
+  members: Array.isArray(team?.members) ? team.members : [],
+  services: Array.isArray(team?.services) ? team.services : [],
+  open_incidents: Number.isFinite(Number(team?.open_incidents)) ? Number(team.open_incidents) : 0,
+});
+
+export default function TeamsPage() {
+  const [teams, setTeams] = useState([]);
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [teamName, setTeamName] = useState("");
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    try {
+      const response = await api("/teams");
+      setTeams(Array.isArray(response) ? response.map(normaliseTeam) : []);
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  // The effect itself must not return the Promise from load(); React treats a
+  // returned value as an effect cleanup function, which was the blank-screen bug.
+  useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => teams.filter((team) => (team.name || "").toLowerCase().includes(query.toLowerCase())), [teams, query]);
+
+  async function createTeam(event) {
+    event.preventDefault();
+    try {
+      await api("/teams", { method: "POST", body: JSON.stringify({ name: teamName.trim() }) });
+      setTeamName("");
+      setCreating(false);
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  return <WorkspacePage eyebrow="WORKSPACE · PEOPLE" title="Teams" description="Know who owns each service and who is on call.">
+    <div className="team-toolbar"><label className="table-search">⌕ <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a team" /></label><button className="primary-button" onClick={() => setCreating(true)}>＋ &nbsp; Add team</button></div>
+    {error ? <div className="empty-state panel">Could not load teams: {error}</div> : <div className="team-grid">{filtered.map((team) => <article className={`panel team-card ${expanded === team.id ? "team-selected" : ""}`} key={team.id}><div className="team-card-head"><span className="team-avatar">{initials(team.name)}</span></div><h2>{display(team.name, "Unnamed team")}</h2><p>{team.members.length} members · {team.services.length} services</p><div className="team-card-section"><small>ON CALL NOW</small><span className="table-owner"><i>{initials(team.on_call)}</i>{display(team.on_call, "Not set")}</span></div><div className="team-card-section"><small>OWNED SERVICES</small><div className="team-service-chips">{team.services.length ? team.services.map((service) => <Link to={`/services/${service.id}`} key={service.id}>{display(service.name)}</Link>) : <span className="muted-chip">No services stored</span>}</div></div>{expanded === team.id && <div className="team-members-expanded">{team.members.map((member) => <span key={member}><i>{initials(member)}</i>{member}</span>)}</div>}<div className="team-card-foot"><span>{team.open_incidents} open incidents</span><button onClick={() => setExpanded(expanded === team.id ? null : team.id)}>{expanded === team.id ? "Hide members" : "View members →"}</button></div></article>)}</div>}
+    {!error && !filtered.length && <div className="empty-state panel">No teams match that name.</div>}
+    {creating && <div className="search-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setCreating(false); }}><form className="create-dialog" onSubmit={createTeam}><div className="section-kicker">NEW TEAM</div><h2>Create a team</h2><label>Team name<input autoFocus value={teamName} onChange={(event) => setTeamName(event.target.value)} /></label><div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setCreating(false)}>Cancel</button><button className="primary-button" disabled={!teamName.trim()}>Create team</button></div></form></div>}
+  </WorkspacePage>;
+}

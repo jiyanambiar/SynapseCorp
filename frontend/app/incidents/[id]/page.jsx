@@ -1,12 +1,67 @@
-
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import WorkspacePage from "../../../components/WorkspacePage";
-const data={"checkout-latency":["Checkout API latency spike","SEV 1","1,284","Sarah Chen","Checkout API","p95 latency above 2.5s in us-east-1. Checkout requests are backing up behind a payment dependency."],"queue-backlog":["Queue backlog growing","SEV 2","426","Alex Lee","Worker Queue","Worker queue depth is above 10k in eu-west-1. New jobs are processing more slowly than usual."],"webhook-delays":["Webhook delivery delays","SEV 3","92","Morgan Kim","Webhook Service","Webhook delivery time is above 30 seconds across global regions."]};
-export default function IncidentDetail(){const {id}=useParams();const navigate=useNavigate();const [incident,setIncident]=useState(data["checkout-latency"]);const [ack,setAck]=useState(false);const [owner,setOwner]=useState("Sarah Chen");const [menu,setMenu]=useState(false);useEffect(()=>{const stored=sessionStorage.getItem(`synapse-incident-${id}`);const current=stored?JSON.parse(stored):(data[id]||data["checkout-latency"]);setIncident(current);setOwner(current[3])},[id]);
- return <WorkspacePage eyebrow="INCIDENT DETAIL" title={incident[0]} description="A focused view of impact, ownership, and response progress." action={<button className="outline-button" onClick={()=>navigate("/incidents")}>← &nbsp; All incidents</button>}>
- <div className="detail-layout"><div className="detail-main"><section className="panel detail-overview"><div className="detail-tags"><span className={`severity ${incident[1].replace(" ","").toLowerCase()}`}><i/> {incident[1]}</span><span className="status-pill">{ack?"Acknowledged":"Investigating"}</span><span className="incident-time">Started 12 minutes ago</span></div><p className="detail-summary">{incident[5]}</p><div className="detail-stats"><div><small>AFFECTED SERVICE</small><Link to={`/services/${incident[4].toLowerCase().replaceAll(" ","-")}`}>{incident[4]} ↗</Link></div><div><small>CUSTOMERS IMPACTED</small><strong>{incident[2]}</strong></div><div><small>REGION</small><strong>us-east-1</strong></div></div></section><section className="panel timeline-panel"><div className="panel-heading"><div><div className="section-kicker">RESPONSE LOG</div><h2>Timeline</h2></div><button className="outline-button" onClick={()=>{const csv=`Event,Details\nIncident detected,${incident[0]}\nSummary,${incident[5]}\nAssignee,${owner}\n`;const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=`${id}-timeline.csv`;a.click();URL.revokeObjectURL(a.href)}}>Export log ↓</button></div><div className="timeline-item"><i className="timeline-dot alert-dot"/><div><strong>Latency threshold breached</strong><p>p95 latency reached 2.84s, above the 1.2s SLO threshold.</p><small>12 min ago · Alerting</small></div></div><div className="timeline-item"><i className="timeline-dot green-timeline"/><div><strong>Incident detected</strong><p>Synapse correlated a latency increase with Checkout API requests.</p><small>11 min ago · Synapse monitor</small></div></div><div className="timeline-item"><i className="timeline-dot"/><div><strong>{owner} assigned</strong><p>Primary owner is coordinating the investigation.</p><small>8 min ago · On-call</small></div></div></section></div>
- <aside className="detail-side"><section className="panel response-panel"><div className="section-kicker">RESPONSE ACTIONS</div><button className="primary-button full-button" onClick={()=>setAck(!ack)}>{ack?"✓ Acknowledged":"Acknowledge incident"}</button><button className="outline-button full-button" onClick={()=>navigate(`/investigations?incident=${id}`)}>Start investigation →</button><div className="side-divider"/><small className="side-label">ASSIGNEE</small><button className="assignee-select" onClick={()=>setMenu(!menu)}><i>{owner.split(" ").map(w=>w[0]).join("")}</i>{owner}<span>⌄</span></button>{menu&&<div className="assignee-options">{["Sarah Chen","Alex Lee","Morgan Kim","Jordan Miller"].map(name=><button key={name} onClick={()=>{setOwner(name);setMenu(false)}}>{name===owner?"✓ ":""}{name}</button>)}</div>}<div className="side-divider"/><small className="side-label">RELATED SERVICES</small><Link className="related-service" to={`/services/${incident[4].toLowerCase().replaceAll(" ","-")}`}><span className="service-symbol alert">◉</span><span><strong>{incident[4]}</strong><small>Degraded · 2.84s</small></span><span>↗</span></Link></section><section className="assistant-mini"><span>RELATED EVIDENCE</span><p>Review the dependency path and matching service signals.</p><button onClick={()=>navigate(`/investigations?incident=${id}`)}>View investigation →</button></section></aside></div>
- </WorkspacePage>;
+import { api, display, initials } from "../../../src/api";
+
+export default function IncidentDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [incident, setIncident] = useState(null);
+  const [triage, setTriage] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [triaging, setTriaging] = useState(false);
+  const [routing, setRouting] = useState(false);
+  const [routeMessage, setRouteMessage] = useState("");
+
+  const load = () => api(`/incidents/${encodeURIComponent(id)}`).then(setIncident).catch((requestError) => setError(requestError.message));
+  useEffect(() => { setIncident(null); setTriage(null); setError(""); load(); }, [id]);
+
+  async function acknowledge() {
+    setSaving(true);
+    try {
+      setIncident(await api(`/incidents/${id}`, { method: "PATCH", body: JSON.stringify({ status: "Acknowledged", acknowledged_at: new Date().toISOString() }) }));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runTriage() {
+    setTriaging(true);
+    setError("");
+    try {
+      setTriage(await api("/agent/triage", { method: "POST", body: JSON.stringify({ incident_id: id }) }));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setTriaging(false);
+    }
+  }
+
+  async function routeToRecommendedOwner() {
+    setRouting(true);
+    setRouteMessage("");
+    try {
+      const response = await api(`/incidents/${id}/route`, { method: "POST" });
+      setIncident(response.incident);
+      setRouteMessage(`Assigned to ${response.action.owner} from the graph ownership path.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setRouting(false);
+    }
+  }
+
+  if (error && !incident) return <WorkspacePage eyebrow="INCIDENT DETAIL" title="Incident unavailable" description={error} action={<button className="outline-button" onClick={() => navigate("/incidents")}>← All incidents</button>} />;
+  if (!incident) return <WorkspacePage eyebrow="INCIDENT DETAIL" title="Loading incident…" description="Retrieving the incident from FalkorDB." />;
+  const acknowledged = incident.status === "Acknowledged";
+  return <WorkspacePage eyebrow="INCIDENT RESPONSE" title={incident.title} description="Confirm ownership, then trace affected customers and the accountable on-call owner." action={<button className="outline-button" onClick={() => navigate("/incidents")}>← &nbsp; All incidents</button>}>
+    {error && <div className="empty-state panel">{error}</div>}
+    <div className="detail-layout"><div className="detail-main"><section className="panel detail-overview"><div className="detail-tags"><span className="severity sev-2"><i /> {incident.severity}</span><span className="status-pill">{incident.status}</span><span className="incident-time">{display(incident.created_at, "Active incident")}</span></div><p className="detail-summary">{display(incident.description, "No description stored for this incident.")}</p><div className="detail-stats"><div><small>AFFECTED SERVICE</small>{incident.service_id ? <Link to={`/services/${incident.service_id}`}>{incident.service} ↗</Link> : <strong>—</strong>}</div><div><small>DIRECT CUSTOMER IMPACT</small><strong>{display(incident.impact, "Run triage")}</strong></div><div><small>PRIMARY OWNER</small><strong>{display(incident.assignee, "Run triage")}</strong></div></div></section>
+      <section className="panel timeline-panel"><div className="panel-heading"><div><div className="section-kicker">RESPONSE LOG</div><h2>What to do next</h2></div></div><div className="timeline-item"><i className="timeline-dot" /><div><strong>{acknowledged ? "Ownership acknowledged" : "Awaiting acknowledgement"}</strong><p>{acknowledged ? "An on-call responder has accepted this incident. Continue with graph triage." : "Acknowledge to record that someone is actively responsible for the response."}</p><small>{display(incident.acknowledged_at, "Not acknowledged yet")}</small></div></div><div className="timeline-item"><i className="timeline-dot green-timeline" /><div><strong>Graph evidence</strong><p>Run triage to trace the incident’s downstream customer impact and the service owner through FalkorDB relationships.</p><small>Track 1: impact · Track 3: personnel routing</small></div></div></section>
+      {triage && <section className="panel triage-result"><div className="panel-heading"><div><div className="section-kicker">GRAPH AGENT EXECUTION</div><h2>Impact and owner routing</h2></div><button className="outline-button" onClick={runTriage} disabled={triaging}>Refresh</button></div><div className="tool-run-list">{triage.tool_runs.map((tool) => <div key={tool.tool}><strong>{tool.tool}</strong><span>{tool.path}</span><small>{tool.result_count} graph result{tool.result_count === 1 ? "" : "s"} · {tool.purpose}</small></div>)}</div><div className="triage-columns"><div><small>CUSTOMERS AT RISK · {triage.summary.affected_customers}</small>{triage.downstream_impact.length ? triage.downstream_impact.map((item, index) => <p key={`${item.customer}-${index}`}><strong>{item.customer}</strong><span>impacted through {item.service}</span></p>) : <p>No customer-impact path is stored for this incident.</p>}</div><div><small>ROUTE TO OWNER · {triage.summary.responsible_owners}</small>{triage.personnel_routing.length ? triage.personnel_routing.map((item, index) => <p key={`${item.owner}-${index}`}><strong>{item.owner}</strong><span>owns {item.service}</span></p>) : <p>No owner path is stored for this incident.</p>}</div></div></section>}</div>
+      <aside className="detail-side"><section className="panel response-panel"><div className="section-kicker">RESPONSE ACTIONS</div><button className="primary-button full-button" disabled={saving || acknowledged} onClick={acknowledge}>{saving ? "Saving…" : acknowledged ? "✓ Acknowledged" : "Acknowledge incident"}</button><p className="action-explainer">Acknowledging saves the response state and timestamp in FalkorDB. It does not resolve the incident.</p><button className="outline-button full-button" disabled={triaging} onClick={runTriage}>{triaging ? "Tracing graph…" : "Run graph agent triage →"}</button>{triage?.recommendation?.owner && <button className="primary-button full-button" disabled={routing} onClick={routeToRecommendedOwner}>{routing ? "Routing…" : `Assign ${triage.recommendation.owner} →`}</button>}{routeMessage && <p className="action-explainer">✓ {routeMessage}</p>}<button className="outline-button full-button" onClick={() => navigate(`/investigations?incident=${id}`)}>Open investigation workspace →</button><div className="side-divider" /><small className="side-label">ASSIGNEE</small><span className="assignee-select"><i>{initials(incident.assignee)}</i>{display(incident.assignee, "Unassigned")}</span></section></aside></div>
+  </WorkspacePage>;
 }
