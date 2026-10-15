@@ -4,54 +4,39 @@ from falkordb import FalkorDB
 def generate_synthetic_graph():
     db = FalkorDB(host="localhost", port=6379)
     g = db.select_graph("companybrain")
-
+    
     g.query("MATCH (n) DETACH DELETE n")
-
-    team_members = ["Prarabdha", "Jiya", "Alex", "Sam", "Taylor"]
-    for member in team_members:
-        g.query(f"CREATE (:TeamMember {{name: '{member}'}})")
-
-    servers = [f"server-{i:03d}" for i in range(1, 6)]
-    for server in servers:
-        status = "failing" if server == "server-004" else "healthy"
-        g.query(f"CREATE (:Server {{name: '{server}', status: '{status}'}})")
-
-    services = ["AuthService", "PaymentAPI", "UserDashboard", "NotificationService", "SearchEngine"]
-    for i, service in enumerate(services):
-        owner = team_members[i % len(team_members)]
-        server = servers[i % len(servers)]
-        
-        g.query(f"""
-            MATCH (t:TeamMember {{name: '{owner}'}}), (s:Server {{name: '{server}'}})
-            CREATE (srv:Service {{name: '{service}'}})
-            CREATE (t)-[:OWNS]->(srv)
-            CREATE (srv)-[:RUNS_ON]->(s)
-        """)
-
-    g.query("""
-        MATCH (payment:Service {name: 'PaymentAPI'}), (auth:Service {name: 'AuthService'})
-        CREATE (payment)-[:DEPENDS_ON]->(auth)
-    """)
-    g.query("""
-        MATCH (dash:Service {name: 'UserDashboard'}), (auth:Service {name: 'AuthService'})
-        CREATE (dash)-[:DEPENDS_ON]->(auth)
+    
+    names = ["Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley"]
+    services = ["AuthAPI", "PaymentService", "UserDashboard", "SearchEngine", "DataPipeline"]
+    companies = ["AcmeCorp", "Globex", "Initech", "Soylent", "Umbrella"]
+    
+    t0, t1 = random.sample(names, 2)
+    srv0, srv1 = random.sample(services, 2)
+    c0, c1 = random.sample(companies, 2)
+    
+    g.query(f"""
+    CREATE (t0:TeamMember {{name: '{t0}'}}), (t1:TeamMember {{name: '{t1}'}})
+    CREATE (s0:Server {{name: 'server-001', status: 'failing'}}), (s1:Server {{name: 'server-002', status: 'healthy'}})
+    CREATE (srv0:Service {{name: '{srv0}'}}), (srv1:Service {{name: '{srv1}'}})
+    CREATE (c0:Customer {{name: '{c0}'}}), (c1:Customer {{name: '{c1}'}})
+    
+    CREATE (t0)-[:OWNS]->(srv0)
+    CREATE (srv0)-[:RUNS_ON]->(s0)
+    CREATE (srv0)-[:IMPACTS]->(c0)
+    
+    CREATE (t1)-[:OWNS]->(srv1)
+    CREATE (srv1)-[:RUNS_ON]->(s1)
+    CREATE (srv1)-[:IMPACTS]->(c1)
+    
+    CREATE (srv1)-[:DEPENDS_ON]->(srv0)
     """)
 
-    customers = ["AcmeCorp", "Globex", "Initech", "Soylent"]
-    for i, customer in enumerate(customers):
-        g.query(f"CREATE (:Customer {{name: '{customer}'}})")
-        
-        service_dep = services[i % 2]
-        g.query(f"""
-            MATCH (c:Customer {{name: '{customer}'}}), (srv:Service {{name: '{service_dep}'}})
-            CREATE (srv)-[:IMPACTS]->(c)
-        """)
+    for _ in range(3):
+        inc_id = f"INC-{random.randint(1000, 9999)}"
+        g.query(f"MATCH (s:Server {{name: 'server-001'}}) CREATE (:Incident {{id: '{inc_id}', description: 'CPU Spike Detected'}})-[:REPORTED_ON]->(s)")
 
-    g.query("""
-        MATCH (s:Server {name: 'server-004'})
-        CREATE (inc:Incident {id: 'INC-9942', description: 'CPU Spike Detected'})
-        CREATE (inc)-[:REPORTED_ON]->(s)
-    """)
+    print("\n✅ SUCCESS: Database seeded with 3 randomized incidents!\n")
 
 if __name__ == "__main__":
     generate_synthetic_graph()
