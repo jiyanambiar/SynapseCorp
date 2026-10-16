@@ -9,3 +9,6 @@ frontend/.vite/
 __pycache__/
 plan.md
 action.md
+venv/
+plan.md
+action.md
