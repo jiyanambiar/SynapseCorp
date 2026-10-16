@@ -7,6 +7,7 @@ import { api, display, statusKind } from "../src/api";
 export default function Home() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   useEffect(() => { 
     api("/dashboard").then(setData).catch((e) => setError(e.message)); 
@@ -15,17 +16,52 @@ export default function Home() {
   return (
     <main className="app-shell">
       <style>{`
+        .mobile-menu-toggle { display: none; }
         @media (max-width: 768px) {
-          .app-shell { flex-direction: column !important; }
-          .mobile-sidebar-wrapper { display: none !important; }
+          .app-shell { flex-direction: column !important; position: relative; }
+          .mobile-menu-toggle {
+            display: flex !important;
+            align-items: center;
+            gap: 6px;
+            background: #153b2b;
+            color: #fff;
+            border: none;
+            padding: 10px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            z-index: 200;
+            width: 100%;
+            border-bottom: 1px solid #0b241b;
+          }
+          .mobile-sidebar-wrapper {
+            display: none !important;
+            width: 100% !important;
+            background: #0e2c21 !important;
+            padding: 20px 15px !important;
+            border-bottom: 1px solid #0b241b;
+          }
+          .mobile-sidebar-wrapper.open {
+            display: block !important;
+          }
           .main-area { width: 100% !important; min-width: 100vw !important; padding-bottom: 2rem; }
           .metric-grid, .middle-grid, .bottom-grid { display: flex !important; flex-direction: column !important; gap: 1rem !important; }
           .content { padding: 1rem !important; }
         }
       `}</style>
-      <div className="mobile-sidebar-wrapper">
+
+      {/* Mobile Toggle Button */}
+      <button 
+        className="mobile-menu-toggle" 
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+      >
+        ☰ {mobileMenuOpen ? "Close Menu" : "Menu"}
+      </button>
+
+      <div className={`mobile-sidebar-wrapper ${mobileMenuOpen ? "open" : ""}`}>
         <Sidebar />
       </div>
+
       <section className="main-area">
         <Header />
         <div className="content">
