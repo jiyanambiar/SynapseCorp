@@ -25,7 +25,7 @@ Instead of relying on disconnected information, Synapse uses graph traversal to 
 ## Live Demo
 
 - **Deployed Application:** https://synapse-frontend-opal.vercel.app/
-- **Demo Video:** https://drive.google.com/file/d/1BcODmpTuNwmUb4bVPPjUn-ppW34YIOKA/view?usp=sharing
+- **Demo Video:** https://drive.google.com/file/d/1per6jexfDmX-SM0rzWU9CrMB7mVut537/view?usp=drive_link
 - **Public Repository:** https://github.com/jiyanambiar/SynapseCorp.git
 
 ## Key Features
