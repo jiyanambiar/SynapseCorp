@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import random
+import os
 from datetime import datetime, timedelta, timezone
 from falkordb import FalkorDB
 
@@ -36,7 +37,12 @@ def add_edge(graph, from_label: str, from_id: str, edge: str, to_label: str, to_
     )
 
 def generate_synthetic_graph(graph_name: str = "companybrain"):
-    graph = FalkorDB(host="localhost", port=6379).select_graph(graph_name)
+    host = os.getenv("FALKORDB_HOST", "localhost")
+    port = int(os.getenv("FALKORDB_PORT", "6379"))
+    username = os.getenv("FALKORDB_USERNAME", "falkordb")
+    password = os.getenv("FALKORDB_PASSWORD", None)
+    
+    graph = FalkorDB(host=host, port=port, username=username, password=password).select_graph(graph_name)
     graph.query("MATCH (node) DETACH DELETE node")
     random.seed(7)
     now = datetime.now(timezone.utc)

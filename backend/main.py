@@ -1,45 +1,38 @@
-"""HTTP API for the FalkorDB-backed Synapse workspace.
-
-The API deliberately keeps the graph as the source of truth. Presentation
-fields are normalised here so the web client never ships fixture data.
-"""
 from __future__ import annotations
-
 import os
 import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from falkordb import FalkorDB
 
-
 app = FastAPI(title="Synapse API")
 
-# Vite uses 5173 in development and 4173 for `vite preview`. Deployments can
-# opt in additional origins without changing source code.
-allowed_origins = [origin.strip() for origin in os.getenv(
-    "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"
-).split(",") if origin.strip()]
+cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173")
+allowed_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-db = FalkorDB(host=os.getenv("FALKORDB_HOST", "localhost"), port=int(os.getenv("FALKORDB_PORT", "6379")))
+db = FalkorDB(
+    host=os.getenv("FALKORDB_HOST", "localhost"),
+    port=int(os.getenv("FALKORDB_PORT", "6379")),
+    username=os.getenv("FALKORDB_USERNAME", "falkordb"),
+    password=os.getenv("FALKORDB_PASSWORD", None)
+)
 GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "companybrain")
-
 
 class TriageRequest(BaseModel):
     incident_id: str
-
 
 class IncidentInput(BaseModel):
     title: str = Field(min_length=1, max_length=200)
@@ -50,59 +43,47 @@ class IncidentInput(BaseModel):
     impact: int | None = Field(default=None, ge=0)
     region: str | None = None
 
-
 class IncidentUpdate(BaseModel):
     status: str | None = None
     assignee: str | None = None
     acknowledged_at: str | None = None
 
-
 class TeamInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-
 
 class WorkspaceInput(BaseModel):
     name: str | None = Field(default=None, max_length=100)
     email: str | None = Field(default=None, max_length=200)
 
-
 class InvestigationInput(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     incident_id: str | None = None
 
-
 def graph():
     return db.select_graph(GRAPH_NAME)
-
 
 def rows(query: str, params: dict[str, Any] | None = None) -> list[list[Any]]:
     return graph().query(query, params or {}).result_set
 
-
 def props(value: Any) -> dict[str, Any]:
     return dict(value or {})
-
 
 def slug(value: str) -> str:
     result = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return result or uuid4().hex[:8]
-
 
 def first_string(values: Any) -> str | None:
     if isinstance(values, list):
         return next((str(value) for value in values if value), None)
     return str(values) if values else None
 
-
 def graph_health(server_statuses: Any) -> str | None:
-    """Derive service health from the real server state when no metric exists."""
     states = {str(status).lower() for status in (server_statuses or []) if status}
     if states & {"failing", "failed", "down", "degraded"}:
         return "Degraded"
     if states and states <= {"healthy", "operational", "up"}:
         return "Healthy"
     return None
-
 
 def service_record(raw: dict[str, Any], owners: Any = None, dependencies: int = 0, server_statuses: Any = None) -> dict[str, Any]:
     name = raw.get("name") or raw.get("id") or "Unnamed service"
@@ -113,7 +94,6 @@ def service_record(raw: dict[str, Any], owners: Any = None, dependencies: int = 
         "description": raw.get("description"), "team": raw.get("team") or first_string(owners),
         "dependencies": int(dependencies or 0),
     }
-
 
 def incident_record(raw: dict[str, Any], service: dict[str, Any] | None = None, owners: Any = None,
                     server_statuses: Any = None, impacted_customers: int = 0) -> dict[str, Any]:
@@ -135,7 +115,6 @@ def incident_record(raw: dict[str, Any], service: dict[str, Any] | None = None, 
         "assignee": raw.get("assignee") or first_string(owners),
     }
 
-
 def all_services() -> list[dict[str, Any]]:
     result = rows("""
         MATCH (s:Service)
@@ -146,13 +125,11 @@ def all_services() -> list[dict[str, Any]]:
     """)
     return sorted((service_record(props(row[0]), row[1], row[2], row[3]) for row in result), key=lambda service: str(service["name"]).lower())
 
-
 def find_service(service_id: str) -> dict[str, Any]:
     found = next((service for service in all_services() if service["id"] == service_id), None)
     if not found:
         raise HTTPException(status_code=404, detail="Service not found")
     return found
-
 
 def all_incidents() -> list[dict[str, Any]]:
     result = rows("""
@@ -164,24 +141,20 @@ def all_incidents() -> list[dict[str, Any]]:
     """)
     return sorted((incident_record(props(row[0]), props(row[1]), row[2], row[3], row[4]) for row in result), key=lambda incident: str(incident["created_at"] or ""), reverse=True)
 
-
 def find_incident(incident_id: str) -> dict[str, Any]:
     found = next((incident for incident in all_incidents() if incident["id"] == incident_id), None)
     if not found:
         raise HTTPException(status_code=404, detail="Incident not found")
     return found
 
-
 @app.get("/")
 def read_root():
     return RedirectResponse(url="/docs")
-
 
 @app.get("/health")
 def health_check():
     rows("RETURN 1")
     return {"status": "ok", "graph": GRAPH_NAME, "cors_origins": allowed_origins}
-
 
 @app.get("/dashboard")
 def get_dashboard():
@@ -196,16 +169,13 @@ def get_dashboard():
                     "customers_impacted": sum(int(incident["impact"] or 0) for incident in active)},
     }
 
-
 @app.get("/incidents")
 def get_incidents():
     return all_incidents()
 
-
 @app.get("/incidents/{incident_id}")
 def get_incident(incident_id: str):
     return find_incident(incident_id)
-
 
 @app.post("/incidents", status_code=201)
 def create_incident(payload: IncidentInput):
@@ -224,7 +194,6 @@ def create_incident(payload: IncidentInput):
         """, {"incident_id": incident_id, "service_id": service["id"], "service_name": service["name"]})
     return find_incident(incident_id)
 
-
 @app.patch("/incidents/{incident_id}")
 def update_incident(incident_id: str, payload: IncidentUpdate):
     find_incident(incident_id)
@@ -232,7 +201,6 @@ def update_incident(incident_id: str, payload: IncidentUpdate):
     if updates:
         rows("MATCH (i:Incident {id: $incident_id}) SET i += $updates", {"incident_id": incident_id, "updates": updates})
     return find_incident(incident_id)
-
 
 @app.post("/triage")
 def run_triage(request: TriageRequest):
@@ -249,28 +217,22 @@ def run_triage(request: TriageRequest):
                  "path": "Incident → Server ← Service ← TeamMember", "result_count": len(personnel_routing)},
             ]}
 
-
 def trace_downstream_impact(incident_id: str) -> list[dict[str, Any]]:
-    """MCP graph tool: trace an incident to its affected customers."""
     impact_raw = rows("""
         MATCH (i:Incident {id: $inc_id})-[:REPORTED_ON]->(:Server)<-[:RUNS_ON]-(service:Service)-[:IMPACTS]->(customer:Customer)
         RETURN service.name, customer.name
     """, {"inc_id": incident_id})
     return [{"service": row[0], "customer": row[1]} for row in impact_raw]
 
-
 def find_responsible_owner(incident_id: str) -> list[dict[str, Any]]:
-    """MCP graph tool: resolve service ownership for an incident."""
     owner_raw = rows("""
         MATCH (i:Incident {id: $inc_id})-[:REPORTED_ON]->(:Server)<-[:RUNS_ON]-(service:Service)<-[:OWNS]-(owner:TeamMember)
         RETURN service.name, owner.name
     """, {"inc_id": incident_id})
     return [{"service": row[0], "owner": row[1]} for row in owner_raw]
 
-
 @app.post("/agent/triage")
 def agent_triage(request: TriageRequest):
-    """A small, inspectable agent loop: choose graph tools, explain, then recommend an action."""
     triage = run_triage(request)
     recommended_owner = triage["personnel_routing"][0]["owner"] if triage["personnel_routing"] else None
     return {**triage,
@@ -278,10 +240,8 @@ def agent_triage(request: TriageRequest):
                                "owner": recommended_owner,
                                "reason": "The graph ownership traversal identified the responder linked to the impacted service." if recommended_owner else "No TeamMember owns the affected service in the graph."}}
 
-
 @app.post("/incidents/{incident_id}/route")
 def route_incident_to_graph_owner(incident_id: str):
-    """Take a reversible, auditable action chosen from the personnel graph path."""
     find_incident(incident_id)
     triage = run_triage(TriageRequest(incident_id=incident_id))
     if not triage["personnel_routing"]:
@@ -299,11 +259,9 @@ def route_incident_to_graph_owner(incident_id: str):
     """, {"incident_id": incident_id, "owner": owner, "properties": action})
     return {"incident": find_incident(incident_id), "action": action, "evidence": triage["personnel_routing"]}
 
-
 @app.get("/services")
 def get_services():
     return all_services()
-
 
 @app.get("/services/{service_id}")
 def get_service(service_id: str):
@@ -329,18 +287,15 @@ def get_service(service_id: str):
             "incidents": [find_incident(item) for item in incident_ids if item],
             "documents": [props(item) for item in detail[3] if item], "decisions": [props(item) for item in detail[4] if item]}
 
-
 def topology_data() -> dict[str, list[dict[str, Any]]]:
     node_rows = rows("MATCH (n) RETURN id(n), labels(n), properties(n)")
     edge_rows = rows("MATCH (n)-[r]->(m) RETURN id(n), id(m), type(r)")
     return {"nodes": [{"id": str(row[0]), "labels": row[1], "props": props(row[2])} for row in node_rows],
             "edges": [{"source": str(row[0]), "target": str(row[1]), "type": row[2]} for row in edge_rows]}
 
-
 @app.get("/graph/topology")
 def get_topology():
     return topology_data()
-
 
 @app.get("/teams")
 def get_teams():
@@ -369,25 +324,20 @@ def get_teams():
                  for row in member_rows for record in [props(row[0])]]
     return sorted(teams, key=lambda team: str(team["name"] or "").lower())
 
-
 @app.post("/teams", status_code=201)
 def create_team(payload: TeamInput):
     team_id = f"team-{uuid4().hex[:10]}"
     rows("CREATE (team:Team) SET team = $properties", {"properties": {"id": team_id, "name": payload.name}})
     return {"id": team_id, "name": payload.name, "members": [], "services": [], "on_call": None, "open_incidents": 0}
 
-
 @app.get("/workspace")
 def get_workspace():
     result = rows("MATCH (workspace:Workspace) RETURN properties(workspace) LIMIT 1")
     if result:
         return props(result[0][0])
-    # A workspace is a graph record, not frontend fixture data. Initialise it
-    # once for graph installations created with the older minimal seed.
     workspace = {"id": "default", "name": f"{GRAPH_NAME.replace('_', ' ').title()} workspace"}
     rows("CREATE (workspace:Workspace) SET workspace = $properties", {"properties": workspace})
     return workspace
-
 
 @app.patch("/workspace")
 def update_workspace(payload: WorkspaceInput):
@@ -395,7 +345,6 @@ def update_workspace(payload: WorkspaceInput):
     if updates:
         rows("MERGE (workspace:Workspace {id: 'default'}) SET workspace += $updates", {"updates": updates})
     return get_workspace()
-
 
 @app.get("/reports")
 def get_reports():
@@ -408,12 +357,9 @@ def get_reports():
             "average_uptime": sum(uptime_values) / len(uptime_values) if uptime_values else None,
             "by_severity": [{"severity": key, "count": value} for key, value in severity.items()], "incidents": incidents}
 
-
 KNOWLEDGE_STOP_WORDS = {"a", "an", "and", "are", "before", "for", "from", "how", "i", "in", "is", "it", "me", "of", "on", "our", "the", "to", "was", "what", "when", "where", "which", "who", "why", "with", "about", "show", "find", "tell", "explain", "company", "team"}
 
-
 def search_company_knowledge(query: str) -> dict[str, Any]:
-    """MCP graph tool: search company entities and return relationship evidence with source documents."""
     terms = list(dict.fromkeys(term for term in re.findall(r"[a-z0-9][a-z0-9_-]*", query.lower())
                                if len(term) > 1 and term not in KNOWLEDGE_STOP_WORDS))
     if not terms:
@@ -510,17 +456,14 @@ def search_company_knowledge(query: str) -> dict[str, Any]:
                                               "matched_terms": item["matched_terms"]} for item in matches],
             "facts": facts[:30], "sources": sources, "terms": terms}
 
-
 @app.post("/knowledge/search")
 def knowledge_search(payload: InvestigationInput):
     return search_company_knowledge(payload.query)
-
 
 @app.get("/investigations")
 def get_investigations():
     result = rows("MATCH (i:Investigation) RETURN properties(i)")
     return sorted((props(row[0]) for row in result), key=lambda item: str(item.get("created_at") or ""), reverse=True)[:20]
-
 
 @app.post("/investigations", status_code=201)
 def create_investigation(payload: InvestigationInput):
