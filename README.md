@@ -1,80 +1,78 @@
-# Synapse — graph-powered incident response
+# Synapse: Graph-Powered Incident Response
 
-Synapse is an inspectable incident-response agent built on FalkorDB. It turns an incident into two explainable graph traversals:
+![FalkorDB](https://img.shields.io/badge/Database-FalkorDB-FF4301?style=for-the-badge)
+![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/Frontend-React%2FVite-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![MCP](https://img.shields.io/badge/Agent-MCP_Enabled-8A2BE2?style=for-the-badge)
 
-- **Downstream impact:** `Incident → Server ← Service → Customer`
-- **Personnel routing:** `Incident → Server ← Service ← TeamMember`
+Synapse is an inspectable incident-response agent built natively on **FalkorDB**. By leveraging a "Company Brain" graph, it transforms chaotic incident data into two explainable, actionable graph traversals:
 
-The agent can then take an auditable action—assign the incident to the graph-recommended owner. FalkorDB is the system of record for services, people, teams, incidents, documents, decisions, projects, agent actions, and all relationships.
+* **Downstream Impact:** `Incident → Server ← Service → Customer`
+* **Personnel Routing:** `Incident → Server ← Service ← TeamMember`
 
-## Tracks covered
+The agent takes auditable actions, such as assigning an incident to the graph-recommended owner. FalkorDB acts as the immutable system of record for services, people, teams, incidents, documents, decisions, projects, agent actions, and all structural relationships.
 
-### Track 1 — Agents That Act on Connected Data
+## Hackathon Tracks Covered
 
-- `POST /agent/triage` selects and runs two multi-hop graph tools.
-- `backend/mcp_server.py` exposes impact tracing, owner lookup, company knowledge search, and incident routing as discoverable MCP tools. The triage UI reports the selected graph tools and evidence paths.
-- The UI shows each tool, relationship path, result count, customers at risk, and responsible owners.
-- `POST /incidents/{id}/route` uses the personnel traversal to assign the incident owner and persists an `AgentAction` node with its reason and links.
-- Acknowledgement and routing are persistent FalkorDB actions, not frontend state.
+### Track 1: Agents That Act on Connected Data
+* **Intelligent Triage:** `POST /agent/triage` seamlessly selects and executes multi-hop graph tools to analyze incidents.
+* **MCP Integration:** `backend/mcp_server.py` exposes impact tracing, owner lookup, company knowledge search, and incident routing as fully discoverable MCP (Model Context Protocol) tools. 
+* **Transparent Evidence:** The triage UI actively reports selected graph tools, relationship paths, result counts, at-risk customers, and responsible owners.
+* **Auditable Actions:** `POST /incidents/{id}/route` utilizes personnel traversal to assign incident owners, persisting an `AgentAction` node with its logical reasoning and linked entities. Acknowledgement and routing are immutable FalkorDB actions, not ephemeral frontend state.
 
-### Track 3 — Company Brain
+### Track 3: Company Brain
+* **Holistic Topology:** The graph interlinks teams, members, services, servers, customers, projects, documents, decisions, incidents, and agent actions.
+* **Graph-Grounded Investigations:** Search across all graph entities and retrieve connected facts and source documents instantly via `POST /knowledge/search` and the `search_company_knowledge` MCP tool.
+* **Deep Service Insights:** Dedicated service pages display owners, upstream/downstream dependencies, runbooks, and decisions, complete with their native graph source IDs.
+* **Traceable Knowledge:** The seeded graph embeds explicit `KNOWS`, `WORKED_ON`, `DOCUMENTS`, `ABOUT`, and `SOURCED_FROM` relationships. This allows complete inspectability into who possesses specific domain knowledge and traces operational decisions directly to their source.
 
-- The graph connects teams, team members, services, servers, customers, projects, documents, decisions, incidents, and agent actions.
-- Investigations search people, teams, services, projects, incidents, documents, and decisions across the graph, then show connected facts and source documents.
-- `POST /knowledge/search` and the MCP `search_company_knowledge` tool return graph matches, relationship facts, and source references.
-- Service detail pages show owner, dependencies, documents/runbooks, decisions, and their graph source IDs.
-- The seeded graph includes explicit `KNOWS`, `WORKED_ON`, `DOCUMENTS`, `ABOUT`, and `SOURCED_FROM` relationships so judges can inspect who knows what and trace decisions to a source.
+## Getting Started
 
-## Run locally
+Follow these steps to spin up the complete full-stack environment and the MCP-compatible agent.
 
-1. Install backend requirements in your virtual environment: `pip install -r requirements.txt`.
-2. Start FalkorDB (for example `docker run -p 6379:6379 falkordb/falkordb:latest`).
-3. Seed the complete demo graph. This deliberately replaces the selected graph:
+### 1. Database Setup
+Start a local instance of FalkorDB using Docker:
+```bash
+docker run -p 6379:6379 falkordb/falkordb:latest
+```
 
-   ```bash
-   ./venv/bin/python backend/seed.py --reset
-   ```
+### 2. Backend Initialization
+Install the required Python dependencies in your virtual environment and seed the database with the complete synthetic demo graph. *(Note: `--reset` will replace any existing graph data).*
 
-4. Run the API:
+```bash
+pip install -r requirements.txt
+./venv/bin/python backend/seed.py --reset
+```
 
-   ```bash
-   ./venv/bin/uvicorn backend.main:app --reload --port 8000
-   ```
+Run the FastAPI backend server:
+```bash
+./venv/bin/uvicorn backend.main:app --reload --port 8000
+```
 
-5. In another terminal, run the frontend:
+### 3. Frontend Initialization
+In a new terminal window, install the Node dependencies and start the Vite development server:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Access the application at: `http://localhost:5173`
 
-   ```bash
-   cd frontend
-   npm run dev
-   ```
-
-Open `http://localhost:5173`.
-
-To connect an MCP-compatible agent to the graph tools, start the server from the repository root in another terminal:
-
+### 4. Optional: Launch the MCP Server
+To connect an MCP-compatible agent to the graph tools, open a new terminal at the repository root and start the server using the standard input/output transport:
 ```bash
 ./venv/bin/python -m backend.mcp_server
 ```
+*Configure your preferred MCP client to launch this command using the repository root as the working directory.*
 
-The server uses MCP stdio transport. Configure your MCP client to launch that command with the repository root as its working directory.
+## Automated Verification
 
-## Judge demo script
-
-1. Open **Services**, choose **Checkout API**, and show its owner, dependencies, runbook, and source-linked decision.
-2. Open **Incidents** → **Checkout API latency spike**.
-3. Click **Run graph agent triage**. Explain the two tool runs and the displayed relationship paths.
-4. Show the affected customers and the graph-recommended owner.
-5. Click **Assign [owner]**. The incident assignee is updated in FalkorDB and an `AgentAction` node is added to the topology.
-6. Click **Acknowledge incident** to record the response state and timestamp. Explain that acknowledgement accepts responsibility; it does not resolve the event.
-7. Open **Topology** to show the connected evidence. In **Investigations**, ask who owns Checkout API and which runbook covers it; show the connected facts, source document, and saved query.
-
-## Automated verification
-
-After seeding, run:
+To ensure all graph-backed data, Track 1 triage evidence, and Track 3 source-linked knowledge are correctly established (without mutating incident states), run the automated verification suite:
 
 ```bash
+# Verify backend graph logic
 ./venv/bin/python backend/verify.py
+
+# Verify frontend build integrity
 cd frontend && npm run build
 ```
-
-`verify.py` checks the required graph-backed data, Track 1 triage evidence, and Track 3 source-linked knowledge without changing incident state.

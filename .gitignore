@@ -4,3 +4,8 @@ frontend/.next/
 frontend/dist/
 frontend/.npm-cache/
 frontend/.vite/
+.aider*
+.qodo/
+__pycache__/
+plan.md
+action.md
