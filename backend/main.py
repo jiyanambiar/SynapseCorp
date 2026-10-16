@@ -12,12 +12,9 @@ from falkordb import FalkorDB
 
 app = FastAPI(title="Synapse API")
 
-cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173")
-allowed_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -154,7 +151,7 @@ def read_root():
 @app.get("/health")
 def health_check():
     rows("RETURN 1")
-    return {"status": "ok", "graph": GRAPH_NAME, "cors_origins": allowed_origins}
+    return {"status": "ok", "graph": GRAPH_NAME, "cors_origins": ["*"]}
 
 @app.get("/dashboard")
 def get_dashboard():
